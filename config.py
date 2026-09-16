@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Модуль конфигурации и валидации состояния приложения."""
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -16,6 +18,9 @@ class ViewerState(BaseModel):
         default="linear",
         description="Тип интерпретации карты глубин (linear или logarithmic)"
     )
+    convergence: int = Field(
+        default=0, ge=-50, le=50, description="Сдвиг плоскости нулевого параллакса"
+    )
 
     method_name: str = Field(default="thor_olson_optimized", description="Имя активного метода")
     view_mode: str = Field(default="anaglyph", description="Режим отображения")
@@ -25,29 +30,22 @@ class ViewerState(BaseModel):
     need_update: bool = Field(default=True, description="Флаг необходимости пересчета")
 
     use_microrelief: bool = Field(default=True, description="Флаг включения микрорельефа")
-
     show_osd: bool = Field(default=True, description="Флаг отображения OSD")
     show_help: bool = Field(default=False, description="Флаг отображения помощи")
-
     has_depth: bool = Field(default=True, description="Флаг наличия 3D метаданных в активном файле")
 
     slideshow_active: bool = Field(default=False, description="Флаг активности слайд-шоу")
     slideshow_delay: float = Field(default=4.0, ge=0.5, le=30.0, description="Задержка слайд-шоу в секундах")
-    show_slideshow_status: bool = Field(default=True, description="Показывать статус слайд-шоу на экране")
+    show_slideshow_status: bool = Field(default=True, description="Показывать статус слайд-шоу")
     slideshow_order: str = Field(
         default="sequential",
         description="Порядок слайд-шоу: sequential (по очереди) или random (случайный)"
     )
 
-    convergence: int = Field(
-        default=0, ge=-150, le=150, description="Сдвиг плоскости нулевого параллакса"
-    )
-
-
     @field_validator("blur")
     @classmethod
     def check_blur_is_odd(cls, v: int) -> int:
+        """Автоматическая валидация: радиус размытия OpenCV должен быть нечетным."""
         if v % 2 == 0:
             return v + 1
         return v
-

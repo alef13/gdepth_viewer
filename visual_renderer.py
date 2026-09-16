@@ -19,8 +19,11 @@ class VisualRenderer(object):
         """Расчет коэффициента для вписывания картинки в экран."""
         return min(self.state.screen_w / img_w, self.state.screen_h / img_h)
 
-    def render_canvas(self, processed_img, current_filename, total_count, file_index):
+    def render_canvas(self, processed_img, current_filename, total_count, file_index, anaglyph_proc):
         """Формирует финальный холст с OSD и справочным окном Help."""
+        # Обновляем внутреннюю ссылку рендерера на актуальный процессор анаглифов
+        self.ap = anaglyph_proc
+
         img_h, img_w, _ = processed_img.shape
         scr_w, scr_h = self.state.screen_w, self.state.screen_h
 
@@ -73,15 +76,15 @@ class VisualRenderer(object):
             f"FILE: {current_filename} [{file_index + 1}/{total_count}]",
             f"VIEW MODE: {mode_status}",
             f"ANAGLYPH METHOD: {m_name if (self.state.view_mode == 'anaglyph' and self.state.has_depth) else 'N/A'}",
-            f"GEOMETRY INTERPRETATION: {self.state.depth_interpretation.upper() if self.state.has_depth else 'N/A'}",
-            f"MICRORELIEF FILTER: {'ON' if (self.state.use_microrelief and self.state.has_depth) else 'OFF'}",
+            f"GEOMETRY: {self.state.depth_interpretation.upper() if self.state.has_depth else 'N/A'}",
+            f"MICRORELIEF: {'ON' if (self.state.use_microrelief and self.state.has_depth) else 'OFF'}",
             f"DISPARITY (STEREO BASE): {self.state.disparity if self.state.has_depth else '0'}",
-            f"CONVERGENCE (PLANE SHIFT): {self.state.convergence}",
             f"BLUR RADIUS: {self.state.blur if self.state.has_depth else 'N/A'}",
             f"OPACITY STRENGTH: {f'{self.state.opacity:.2f}' if self.state.has_depth else 'N/A'}",
+            f"CONVERGENCE SHIFT: {self.state.convergence if self.state.has_depth else 'N/A'}",
             f"SCALE: {self.state.scale * 100:.1f}% | OFFSET: {self.state.offset_x}, {self.state.offset_y}",
             f"SLIDESHOW PLAYBACK: {ss_status}",
-            "------------------------------------------------",
+            "----------------------------------------------------------------",
             "Press [ TAB ] to hide OSD Panel | [ F1 ] for Interactive Help Window"
         ]
         
@@ -101,10 +104,17 @@ class VisualRenderer(object):
         help_lines = [
             "=== DYNAMIC DEPTH INTERACTIVE VIEWER HELP ===",
             "[ ESC ]             Exit program viewport session",
-            "[ ENTER ]           Export current configured frame frame to high-quality PNG",
-            "[ SPACE ]           Switch window mode to Original Flat Photo",
-            "[ N ]               Switch window mode to Horizontal Side-by-Side Stereopair",
-            "[ C ]               Switch window mode to Jet-Colored Depth Map Visualization",
+            "[ TAB ]             Toggle Left-Side OSD Parameters Panel ON / OFF",
+            "[ F1 ]              Toggle this Interactive Help Window ON / OFF",
+            "[ F2 ]              Export current configured frame to high-quality PNG",
+            "[ F3 ]              Switch window mode to Original Flat 2D Photo",
+            "[ F4 ]              Switch window mode to Horizontal Side-by-Side Stereopair",
+            "[ F5 ]              Switch window mode to Jet-Colored Depth Map Visualization",
+            "[ F6 ]              Toggle Depth Geometry Interpretation (LINEAR / LOGARITHMIC)",
+            "[ F7 ]              Toggle ВЧ-Microrelief (Overlay Blend Formula) ON / OFF",
+            "[ F8 ]              Export complete Pydantic application session metadata dump",
+            "[ F9 ]              Toggle Slideshow Autoplay engine ON / OFF",
+            "[ F10 ]             Toggle Slideshow Order (SEQUENTIAL / RANDOM SHUFFLE)",
             "--- RED-CYAN ANAGLYPH MATRICES RAMP ---",
             "[ Q W E R T Y U I O P ] -> Trigger 10 basic empirical and classic methods",
             "--- ADVANCED & GREEN-MAGENTA MATRICES RAMP ---",
@@ -112,20 +122,14 @@ class VisualRenderer(object):
             "[ D ]               -> Trigger LCD-Display Spectrum Optimized Thor Olson Method",
             "[ Z ]               -> Trigger Green-Magenta Empirical Pure Matrix",
             "[ X ]               -> Trigger Green-Magenta Dubois Linear Crosstalk-Compensated Method",
-            "--- 3D MODIFIERS & SLIDESHOW CONTROLS ---",
-            "[ M ]               -> Toggle ВЧ-Microrelief (Overlay Blend Formula) ON/OFF",
-            "[ H ]               -> Toggle Geometry Interpretation (LINEAR / LOGARITHMIC)",
+            "--- 3D MODIFIERS & VIEWPORT CONTROLS ---",
             "[ / ] / [ * ]       -> Scale Stereo Base down / up (Disparity step 2)",
-            "[ , ] / [ . ]       -> Shift Zero Parallax Plane (Depth Convergence)",
-            "[ 7 ] / [ 8 ]       -> Scale Detail Filter down / up (Blur step 2)",
-            "[ 4 ] / [ 5 ]       -> Scale Detail Strength down / up (Opacity step 0.05)",
+            "[ INS ] / [ DEL ]   -> Shift Zero Parallax Plane up / down (Depth Convergence step 2)",
+            " /       -> Scale Detail Filter down / up (Blur step 2)",
+            " /       -> Scale Detail Strength down / up (Opacity step 0.05)",
             "[ + ] / [ - ]       -> Interactive Canvas Zoom In / Zoom Out step 15%",
-            "[ 0 ] / [ 1 ]       -> Reset to 100% texture scale / Auto-Fit to Screen viewport",
-            "[ V ]               -> Toggle Slideshow Autoplay engine ON / OFF",
-            "[ B ]               -> Toggle Slideshow Order (SEQUENTIAL / RANDOM SHUFFLE)",
-            "[ [ ] / [ ] ]       -> Decrease / Increase Slideshow Autoplay timer interval by 0.5s",
+            " /       -> Reset to 100% texture scale / Auto-Fit to Screen viewport",
             "[ ARROW KEYS ]      -> Pan/Scroll oversized matrix across viewport canvas",
-            "[ J ]               -> Export complete Pydantic application session metadata dump",
         ]
         
         box_w, box_h = 790, len(help_lines) * 25 + 30
@@ -138,7 +142,7 @@ class VisualRenderer(object):
 
         y_pos = start_y + 30
         for line in help_lines:
-            color = (0, 255, 255) if (line.startswith("===") or line.startswith("---")) else (255, 255, 255)
+            color = (0, 255, 255) if (line.startswith("=== ") or line.startswith("---")) else (255, 255, 255)
             cv2.putText(canvas, line, (start_x + 30, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.44, color, 1, cv2.LINE_AA)
             y_pos += 25
         return canvas

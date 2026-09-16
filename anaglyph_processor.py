@@ -142,6 +142,7 @@ class AnaglyphProcessor(object):
         image = self.dp.primary_img
         img_h, img_w, _ = image.shape
 
+        # Извлекаем детализированную карту глубин из GDepthProcessor
         if state_obj.use_microrelief:
             depth_map = self.dp.get_detailed_depth(state_obj.blur, state_obj.opacity)
         else:
@@ -150,6 +151,7 @@ class AnaglyphProcessor(object):
         if depth_map.shape[:2] != (img_h, img_w):
             depth_map = cv2.resize(depth_map, (img_w, img_h))
 
+        # Режим визуализации чистой карты глубин
         if state_obj.view_mode == "depthmap":
             return cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
 
@@ -162,18 +164,13 @@ class AnaglyphProcessor(object):
             depth_normalized = np.clip(depth_normalized, 0.0, 1.0)
 
         # МАТЕМАТИКА КОНВЕРГЕНЦИИ:
-        # Переводим convergence из попугаев в относительный сдвиг (-0.5 до +0.5)
+        # Сдвигаем нормализованную карту на величину convergence
         conv_bias = state_obj.convergence / 100.0
-        
-        # Сдвигаем нормализованную карту. 
-        # Объекты, у которых (depth_normalized - conv_bias) == 0, станут плоскостью экрана.
-        # Значения меньше 0 уйдут в отрицательный параллакс (вылет), больше 0 - в положительный.
         shift_val = (depth_normalized - 0.5 - conv_bias) * (state_obj.disparity / 2.0)
 
         x_indices, y_indices = np.meshgrid(np.arange(img_w), np.arange(img_h))
 
-        # Внимание: знак сменился на ПЛЮС для левого и МИНУС для правого, 
-        # так как shift_val теперь может быть отрицательным!
+        # Знак сменился из-за учета направления смещения convergence
         map_x_left = (x_indices + shift_val).astype(np.float32)
         map_x_right = (x_indices - shift_val).astype(np.float32)
         map_y = y_indices.astype(np.float32)
@@ -181,9 +178,11 @@ class AnaglyphProcessor(object):
         left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         right_eye = cv2.remap(image, map_x_right, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
+        # Режим сборки горизонтальной стереопары (Side-by-Side)
         if state_obj.view_mode == "stereopair":
             return np.hstack((left_eye, right_eye))
 
+        # Режим анаглифа: Прямой вызов математического метода по строковому имени
         elif state_obj.view_mode == "anaglyph":
             mixer_func = getattr(self, state_obj.method_name, None)
             if mixer_func is not None:

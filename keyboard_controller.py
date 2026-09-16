@@ -1,5 +1,5 @@
 ﻿# -*- coding: utf-8 -*-
-"""Модуль асинхронного перехвата ввода и управления сессией слайд-шоу."""
+"""Модуль аппаратного перехвата ввода, независимый от языковой раскладки."""
 
 import ctypes
 import os
@@ -12,7 +12,11 @@ from gdepth_processor import GDepthProcessor
 
 
 class KeyboardController(object):
-    """Класс-контроллер для обработки ввода, таймеров слайд-шоу и переключения файлов."""
+    """Класс-контроллер для обработки ввода, таймеров слайд-шоу и переключения файлов.
+
+    Абсолютно все горячие клавиши переведены на физические коды WinAPI Virtual-Key,
+    что делает управление независимым от раскладки и защищает от синтаксических ошибок.
+    """
 
     def __init__(self, files_list, start_idx, window_name, anaglyph_processor, state_obj, visual_renderer):
         self.files = files_list
@@ -20,36 +24,66 @@ class KeyboardController(object):
         self.win_name = window_name
         self.ap = anaglyph_processor
         self.state = state_obj
-        self.renderer = visual_renderer  # Инжектируем класс визуализации
+        self.renderer = visual_renderer
         
-        # Кроссплатформенные константы клавиш WinAPI
+        # --- ПОЛНАЯ ТАБЛИЦА СИСТЕМНЫХ АППАРАТНЫХ КОНСТАНТ (VIRTUAL-KEY CODES) ---
         self.VK_LEFT, self.VK_UP, self.VK_RIGHT, self.VK_DOWN = 0x25, 0x26, 0x27, 0x28
-        self.VK_PRIOR, self.VK_NEXT = 0x21, 0x22
-        self.VK_TAB, self.VK_F1 = 0x09, 0x70
+        self.VK_PRIOR, self.VK_NEXT = 0x21, 0x22  # PgUp / PgDown
+        self.VK_TAB = 0x09
+        self.VK_INSERT, self.VK_DELETE = 0x2D, 0x2E
         
+        # Функциональный ряд F1-F10
+        self.VK_F1, self.VK_F2, self.VK_F3, self.VK_F4, self.VK_F5 = 0x70, 0x71, 0x72, 0x73, 0x74
+        self.VK_F6, self.VK_F7, self.VK_F8, self.VK_F9, self.VK_F10 = 0x75, 0x76, 0x77, 0x78, 0x79
+        
+        # Цифровой блок масштаба и параметров (0, 1, 4, 5, 7, 8)
+        self.VK_0, self.VK_1 = 0x30, 0x31
+        self.VK_4, self.VK_5 = 0x34, 0x35
+        self.VK_7, self.VK_8 = 0x37, 0x38
+        
+        # Знаки, скобки и калькуляторный блок
+        self.VK_OEM_PLUS, self.VK_OEM_MINUS = 0xBB, 0xBD  # Кнопки + и -
+        self.VK_MULTIPLY, self.VK_DIVIDE = 0x6A, 0x6F    # NumPad * и /
+        self.VK_OEM_2 = 0xBF                             # Физическая клавиша '/' (возле Ю)
+        self.VK_OEM_4 = 0xDB                             # Физическая клавиша '[' (хетч Х)
+        self.VK_OEM_6 = 0xDD                             # Физическая клавиша ']' (хетч Ъ)
+        
+        # Реактивная карта триггеров для защиты от дребезга контактов (одиночные нажатия)
+        self.key_states = {
+            self.VK_TAB: False, self.VK_PRIOR: False, self.VK_NEXT: False,
+            self.VK_F1: False, self.VK_F2: False, self.VK_F3: False, self.VK_F4: False, self.VK_F5: False,
+            self.VK_F6: False, self.VK_F7: False, self.VK_F8: False, self.VK_F9: False, self.VK_F10: False,
+            self.VK_OEM_4: False, self.VK_OEM_6: False
+        }
+        
+        # Физическая карта буквенных клавиш (ASCII-коды заглавных букв)
+        self.vk_method_map = {
+            0x51: "wimmer_pure",               # Q
+            0x57: "wimmer_balanced",           # W
+            0x45: "vu_tran_least_squares",     # E
+            0x52: "wimmer_optimized_matrix",   # R
+            0x54: "ducos_classic",             # T
+            0x59: "sgi_gray",                  # Y
+            0x55: "wimmer_half_color",         # U
+            0x49: "wimmer_green_optimized",    # I
+            0x4F: "dubois_projection",         # O
+            0x50: "thor_olson_optimized",      # P
+            0x41: "mcallister_midpoint",       # A
+            0x53: "rossman_luminance",         # S
+            0x44: "thor_olson_lcd",            # D
+            0x5A: "green_magenta_pure",        # Z
+            0x58: "green_magenta_dubois"       # X
+        }
+        
+        for vk_code in self.vk_method_map:
+            self.key_states[vk_code] = False
+
         self.get_async_key = ctypes.windll.user32.GetAsyncKeyState
         self.get_async_key.argtypes = [ctypes.c_int]
         self.get_async_key.restype = ctypes.c_short
-
-        self.pgup_pressed = False
-        self.pgdn_pressed = False
-        self.tab_pressed = False
-        self.f1_pressed = False
-        self.v_pressed = False
-        self.b_pressed = False
-        self.h_pressed = False
-        self.j_pressed = False
+        
         self.move_step = 25
         self.slideshow_accumulator = 0
-
-        self.key_method_map = {
-            "q": "wimmer_pure", "w": "wimmer_balanced", "e": "vu_tran_least_squares",
-            "r": "wimmer_optimized_matrix", "t": "ducos_classic", "y": "sgi_gray",
-            "u": "wimmer_half_color", "i": "wimmer_green_optimized", "o": "dubois_projection",
-            "p": "thor_olson_optimized",
-            "a": "mcallister_midpoint", "s": "rossman_luminance", "d": "thor_olson_lcd",
-            "z": "green_magenta_pure", "x": "green_magenta_dubois"
-        }
 
     def get_current_file(self):
         return self.files[self.file_index]
@@ -80,9 +114,20 @@ class KeyboardController(object):
         except Exception as err:
             print(f"[-] Ошибка загрузки {self.files[self.file_index]}: {err}", file=sys.stderr)
 
+    def _is_pressed(self, vk_code):
+        """Проверяет нажатие клавиши с защитой от повторного срабатывания (дребезга)."""
+        if self.get_async_key(vk_code) < 0:
+            if not self.key_states.get(vk_code, False):
+                self.key_states[vk_code] = True
+                return True
+        else:
+            self.key_states[vk_code] = False
+        return False
+
     def handle_input(self, image_cached):
         """Главный диспетчер обработки сигналов ввода и таймера слайд-шоу."""
         loop_delay_ms = 15
+        # Используем waitKey исключительно как системный триггер OpenCV для прорисовки окон
         raw_key = cv2.waitKey(loop_delay_ms)
         
         if self.state.slideshow_active:
@@ -90,124 +135,131 @@ class KeyboardController(object):
             if self.slideshow_accumulator >= (self.state.slideshow_delay * 1000):
                 self._switch_file(1)
 
-        if raw_key == 27:  # ESC
+        # Выход по аппаратному ESC (0x1B)
+        if self.get_async_key(0x1B) < 0:
             return False
 
-        if raw_key != -1:
-            key_8bit = raw_key & 0xFF
-            char_key = chr(key_8bit).lower() if 32 <= key_8bit < 127 else ""
-
-            if key_8bit == 32:  # Пробел
-                if self.state.view_mode != "primary":
-                    self.state.view_mode = "primary"; self.state.need_update = True
-            elif char_key == "n":  # Режим горизонтальной стереопары Side-by-Side
-                if self.state.view_mode != "stereopair":
-                    self.state.view_mode = "stereopair"; self.state.need_update = True
-            elif char_key == "c":  # Режим визуализации карты глубин
-                if self.state.view_mode != "depthmap":
-                    self.state.view_mode = "depthmap"; self.state.need_update = True
-            elif char_key == "m":  # Включение/отключение микрорельефа
-                self.state.use_microrelief = not self.state.use_microrelief; self.state.need_update = True
-            elif char_key in self.key_method_map:
+        # --- СКАНИРОВАНИЕ МАТРИЦ АНАГЛИФА ПО ХАРДВЕРНЫМ КОДАМ БУКВЕННЫХ КЛАВИШ ---
+        for vk_code, method_name in self.vk_method_map.items():
+            if self._is_pressed(vk_code):
                 self.state.view_mode = "anaglyph"
-                self.state.method_name = self.key_method_map[char_key]
+                self.state.method_name = method_name
                 self.state.need_update = True
 
-            elif key_8bit in (ord("+"), ord("=")): self.state.scale *= 1.15
-            elif key_8bit == ord("-"): self.state.scale /= 1.15
-            elif key_8bit == ord("0"):
-                self.state.scale = 1.0; self.state.offset_x, self.state.offset_y = 0, 0
-            elif key_8bit == ord("1"):
-                h, w, _ = image_cached.shape
-                self.state.scale = self.renderer.get_fit_to_screen_scale(w, h)
-                self.state.offset_x, self.state.offset_y = 0, 0
+        # --- СКВОЗНОЙ КНОПОЧНЫЙ ОПРОС РЯДА F1-F10 И МОДИФИКАТОРОВ ---
+        if self._is_pressed(self.VK_F1):
+            self.state.show_help = not self.state.show_help
 
-            elif char_key == "[":
-                try: self.state.slideshow_delay = max(0.5, self.state.slideshow_delay - 0.5)
-                except Exception: pass
-            elif char_key == "]":
-                try: self.state.slideshow_delay = min(30.0, self.state.slideshow_delay + 0.5)
-                except Exception: pass
+        if self._is_pressed(self.VK_F2):
+            base_name = self.files[self.file_index].rsplit('.', 1)[0]
+            m_suffix = "Original" if self.state.view_mode == "primary" else ("Stereopair" if self.state.view_mode == "stereopair" else f"DepthMap_{self.state.depth_interpretation.upper()}" if self.state.view_mode == "depthmap" else self.ap.method_details[self.state.method_name].replace(" ", "_"))
+            out_filename = f"{base_name}_{m_suffix}_d{self.state.disparity}_b{self.state.blur}_o{self.state.opacity:.2f}.png"
+            try:
+                cv2.imwrite(out_filename, image_cached)
+                print(f"[+] Экспорт завершен: {out_filename}")
+            except Exception as e:
+                print(f"[-] Ошибка экспорта: {e}", file=sys.stderr)
 
-            elif key_8bit == ord("/"):
-                try: self.state.disparity = max(0, self.state.disparity - 2); self.state.need_update = True
-                except Exception: pass
-            elif key_8bit == ord("*"):
-                try: self.state.disparity = min(100, self.state.disparity + 2); self.state.need_update = True
-                except Exception: pass
-            elif key_8bit == ord("7"):
-                try: self.state.blur = max(3, self.state.blur - 2); self.state.need_update = True
-                except Exception: pass
-            elif key_8bit == ord("8"):
-                try: self.state.blur = min(101, self.state.blur + 2); self.state.need_update = True
-                except Exception: pass
-            elif key_8bit == ord("4"):
-                try: self.state.opacity = round(max(0.0, self.state.opacity - 0.05), 2); self.state.need_update = True
-                except Exception: pass
-            elif key_8bit == ord("5"):
-                try: self.state.opacity = round(min(1.0, self.state.opacity + 0.05), 2); self.state.need_update = True
-                except Exception: pass
-            # Регулировка положительного/отрицательного параллакса (Плоскость конвергенции)
-            elif char_key == ",":
-                try:
-                    self.state.convergence = max(-50, self.state.convergence - 5)
-                    self.state.need_update = True
-                    print(f"[*] Схождение сдвинуто назад (больше положительного параллакса): {self.state.convergence}")
-                except Exception: pass
-            elif char_key == ".":
-                try:
-                    self.state.convergence = min(50, self.state.convergence + 5)
-                    self.state.need_update = True
-                    print(f"[*] Схождение сдвинуто вперед (больше вылета из экрана): {self.state.convergence}")
-                except Exception: pass
+        if self._is_pressed(self.VK_F3):
+            if self.state.view_mode != "primary":
+                self.state.view_mode = "primary"
+                self.state.need_update = True
 
+        if self._is_pressed(self.VK_F4):
+            if self.state.view_mode != "stereopair":
+                self.state.view_mode = "stereopair"
+                self.state.need_update = True
 
-            elif key_8bit == 13:  # Enter
-                base_name = self.files[self.file_index].rsplit('.', 1)[0]
-                m_suffix = "Original" if self.state.view_mode == "primary" else ("Stereopair" if self.state.view_mode == "stereopair" else f"DepthMap_{self.state.depth_interpretation.upper()}" if self.state.view_mode == "depthmap" else self.ap.method_details[self.state.method_name].replace(" ", "_"))
-                out_filename = f"{base_name}_{m_suffix}_d{self.state.disparity}_b{self.state.blur}_o{self.state.opacity:.2f}.png"
-                try: cv2.imwrite(out_filename, image_cached)
-                except Exception: pass
+        if self._is_pressed(self.VK_F5):
+            if self.state.view_mode != "depthmap":
+                self.state.view_mode = "depthmap"
+                self.state.need_update = True
 
-        # Низкоуровневый асинхронный опрос WinAPI
-        if self.get_async_key(ord("V")) < 0:
-            if not self.v_pressed: self.state.slideshow_active = not self.state.slideshow_active; self.slideshow_accumulator = 0; self.v_pressed = True
-        else: self.v_pressed = False
+        if self._is_pressed(self.VK_F6):
+            self.state.depth_interpretation = "logarithmic" if self.state.depth_interpretation == "linear" else "linear"
+            self.state.need_update = True
 
-        if self.get_async_key(ord("B")) < 0:
-            if not self.b_pressed: self.state.slideshow_order = "random" if self.state.slideshow_order == "sequential" else "sequential"; self.b_pressed = True
-        else: self.b_pressed = False
+        if self._is_pressed(self.VK_F7):
+            self.state.use_microrelief = not self.state.use_microrelief
+            self.state.need_update = True
 
-        if self.get_async_key(ord("H")) < 0:
-            if not self.h_pressed: self.state.depth_interpretation = "logarithmic" if self.state.depth_interpretation == "linear" else "linear"; self.state.need_update = True; self.h_pressed = True
-        else: self.h_pressed = False
+        if self._is_pressed(self.VK_F8):
+            current_dump = self.state.model_dump()
+            dump_info = f"\n=== PYDANTIC ДАМП СОСТОЯНИЯ ===\nФайл: {self.files[self.file_index]}\n"
+            for k, v in current_dump.items(): dump_info += f"{k}: {v}\n"
+            dump_info += "===============================\n"
+            with open("viewer_dump.txt", "a", encoding="utf-8") as df: df.write(dump_info)
+            print("[+] Параметры сессии сохранены в файл viewer_dump.txt")
 
-        if self.get_async_key(ord("J")) < 0:
-            if not self.j_pressed:
-                current_dump = self.state.model_dump()
-                dump_info = f"\n=== PYDANTIC ДАМП СОСТОЯНИЯ ===\nФайл: {self.files[self.file_index]}\n"
-                for k, v in current_dump.items(): dump_info += f"{k}: {v}\n"
-                dump_info += "===============================\n"
-                with open("viewer_dump.txt", "a", encoding="utf-8") as df: df.write(dump_info)
-                self.j_pressed = True
-        else: self.j_pressed = False
+        if self._is_pressed(self.VK_F9):
+            self.state.slideshow_active = not self.state.slideshow_active
+            self.slideshow_accumulator = 0
 
-        if self.get_async_key(self.VK_TAB) < 0:
-            if not self.tab_pressed: self.state.show_osd = not self.state.show_osd; self.tab_pressed = True
-        else: self.tab_pressed = False
+        if self._is_pressed(self.VK_F10):
+            self.state.slideshow_order = "random" if self.state.slideshow_order == "sequential" else "sequential"
 
-        if self.get_async_key(self.VK_F1) < 0:
-            if not self.f1_pressed: self.state.show_help = not self.state.show_help; self.f1_pressed = True
-        else: self.f1_pressed = False
+        # Управление интервалом слайд-шоу по аппаратным кодам клавиш OEM [ и ]
+        if self._is_pressed(self.VK_OEM_4):  # Физическая клавиша [
+            try:
+                self.state.slideshow_delay = max(0.5, self.state.slideshow_delay - 0.5)
+                print(f"[*] Интервал слайд-шоу уменьшен: {self.state.slideshow_delay:.1f} сек.")
+            except Exception: pass
 
-        if self.get_async_key(self.VK_PRIOR) < 0:
-            if not self.pgup_pressed: self._switch_file(-1); self.pgup_pressed = True
-        else: self.pgup_pressed = False
+        if self._is_pressed(self.VK_OEM_6):  # Физическая клавиша ]
+            try:
+                self.state.slideshow_delay = min(30.0, self.state.slideshow_delay + 0.5)
+                print(f"[*] Интервал слайд-шоу увеличен: {self.state.slideshow_delay:.1f} сек.")
+            except Exception: pass
 
-        if self.get_async_key(self.VK_NEXT) < 0:
-            if not self.pgdn_pressed: self._switch_file(1); self.pgdn_pressed = True
-        else: self.pgdn_pressed = False
+        # Регулировка шага стереобазы (Disparity) по символам '*' и '/'
+        if self.get_async_key(self.VK_MULTIPLY) < 0 or (self.get_async_key(0x10) < 0 and self.get_async_key(0x38) < 0):
+            try: self.state.disparity = min(100, self.state.disparity + 2); self.state.need_update = True
+            except Exception: pass
+        elif self.get_async_key(self.VK_DIVIDE) < 0 or self.get_async_key(self.VK_OEM_2) < 0:
+            try: self.state.disparity = max(0, self.state.disparity - 2); self.state.need_update = True
+            except Exception: pass
 
+        # Регулировка плоскости схождения (Convergence) на аппаратные клавиши INS / DEL
+        if self.get_async_key(self.VK_INSERT) < 0:
+            try: self.state.convergence = min(50, self.state.convergence + 2); self.state.need_update = True
+            except Exception: pass
+        elif self.get_async_key(self.VK_DELETE) < 0:
+            try: self.state.convergence = max(-50, self.state.convergence - 2); self.state.need_update = True
+            except Exception: pass
+
+        # Изменение размытия (Blur 7/8) и силы микрорельефа (Opacity 4/5)
+        if self.get_async_key(self.VK_8) < 0:
+            try: self.state.blur = min(101, self.state.blur + 2); self.state.need_update = True
+            except Exception: pass
+        elif self.get_async_key(self.VK_7) < 0:
+            try: self.state.blur = max(3, self.state.blur - 2); self.state.need_update = True
+            except Exception: pass
+
+        if self.get_async_key(self.VK_5) < 0:
+            try: self.state.opacity = round(min(1.0, self.state.opacity + 0.05), 2); self.state.need_update = True
+            except Exception: pass
+        elif self.get_async_key(self.VK_4) < 0:
+            try: self.state.opacity = round(max(0.0, self.state.opacity - 0.05), 2); self.state.need_update = True
+            except Exception: pass
+
+        # Интерактивное масштабирование кадра (+ / - / 0 / 1)
+        if self.get_async_key(self.VK_OEM_PLUS) < 0: self.state.scale *= 1.05
+        elif self.get_async_key(self.VK_OEM_MINUS) < 0: self.state.scale /= 1.05
+        elif self.get_async_key(self.VK_0) < 0:
+            self.state.scale = 1.0; self.state.offset_x, self.state.offset_y = 0, 0
+        elif self.get_async_key(self.VK_1) < 0:
+            h, w, _ = image_cached.shape
+            self.state.scale = self.renderer.get_fit_to_screen_scale(w, h)
+            self.state.offset_x, self.state.offset_y = 0, 0
+
+        # Перелистывание каталога изображений PageUp / PageDown
+        if self._is_pressed(self.VK_PRIOR): self._switch_file(-1)
+        if self._is_pressed(self.VK_NEXT): self._switch_file(1)
+        
+        # Переключение OSD по нажатию TAB
+        if self._is_pressed(self.VK_TAB): self.state.show_osd = not self.state.show_osd
+
+        # Навигация панорамирования физическими стрелками клавиатуры
         if self.get_async_key(self.VK_LEFT) < 0: self.state.offset_x += self.move_step
         if self.get_async_key(self.VK_RIGHT) < 0: self.state.offset_x -= self.move_step
         if self.get_async_key(self.VK_UP) < 0: self.state.offset_y += self.move_step
