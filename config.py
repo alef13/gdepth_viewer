@@ -42,6 +42,10 @@ class ViewerState(BaseModel):
         description="Порядок слайд-шоу: sequential (по очереди) или random (случайный)"
     )
 
+    # === ТЕКУЩИЙ ПРОГРЕСС ТАЙМЕРА СЛАЙД-ШОУ (В СЕКУНДАХ) ===
+    slideshow_accumulator: float = Field(default=0.0, description="Накопленное реальное время текущего слайда в секундах")
+
+
     @field_validator("blur")
     @classmethod
     def check_blur_is_odd(cls, v: int) -> int:

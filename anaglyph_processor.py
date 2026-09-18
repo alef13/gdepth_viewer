@@ -1,5 +1,5 @@
 ﻿# -*- coding: utf-8 -*-
-"""Модуль расчета параллакса и модульного микширования 3D-анаглифов."""
+"""Модуль расчета параллакса и модульного микширования 3D-анаглифов с автокропом."""
 
 import cv2
 import numpy as np
@@ -92,7 +92,6 @@ class AnaglyphProcessor(object):
         mat_L = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]])
         mat_R = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
         return np.clip(cv2.add(cv2.transform(left_eye, mat_L), cv2.transform(right_eye, mat_R)), 0, 255).astype(np.uint8)
-
     # === НАУЧНЫЕ И ПРОЕКЦИОННЫЕ МЕТОДЫ (Linear float32) ===
 
     def dubois_projection(self, left_eye, right_eye):
@@ -132,17 +131,16 @@ class AnaglyphProcessor(object):
         lL, lR = self._get_linear_channels(left_eye, right_eye)
         return self._to_srgb_8bit(cv2.add(cv2.transform(lL, mat_L), cv2.transform(lR, mat_R)))
 
-    # === ГЛАВНЫЙ КОНВЕЙЕР ГЕНЕРАЦИИ СТЕРЕОИЗОБРАЖЕНИЙ ===
+    # === ГЛАВНЫЙ КОНВЕЙЕР РЕНДЕРИНГА С АВТОРЕЗАНИЕМ ОРЕОЛОВ ===
 
     def render_view_mode(self, state_obj):
-        """Рендерит кадр. Все исходные данные извлекаются напрямую из инжектированного dp."""
+        """Рендерит кадр с математическим отсечением краевых дефектов."""
         if state_obj.view_mode == "primary" or not self.dp.has_depth:
             return self.dp.primary_img.copy()
 
         image = self.dp.primary_img
         img_h, img_w, _ = image.shape
 
-        # Извлекаем детализированную карту глубин из GDepthProcessor
         if state_obj.use_microrelief:
             depth_map = self.dp.get_detailed_depth(state_obj.blur, state_obj.opacity)
         else:
@@ -151,38 +149,61 @@ class AnaglyphProcessor(object):
         if depth_map.shape[:2] != (img_h, img_w):
             depth_map = cv2.resize(depth_map, (img_w, img_h))
 
-        # Режим визуализации чистой карты глубин
         if state_obj.view_mode == "depthmap":
             return cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
 
-        # Нормализуем карту в диапазон [0.0, 1.0]
         depth_normalized = depth_map.astype(float) / 255.0
 
-        # Применяем геометрическую интерпретацию распределения глубин (linear / log)
         if state_obj.depth_interpretation == "logarithmic":
             depth_normalized = (np.exp(depth_normalized * 3.0) - 1.0) / (np.exp(3.0) - 1.0)
             depth_normalized = np.clip(depth_normalized, 0.0, 1.0)
 
-        # МАТЕМАТИКА КОНВЕРГЕНЦИИ:
-        # Сдвигаем нормализованную карту на величину convergence
+        """
+        # Вычисление сдвигов параллакса и конвергенции
         conv_bias = state_obj.convergence / 100.0
         shift_val = (depth_normalized - 0.5 - conv_bias) * (state_obj.disparity / 2.0)
 
         x_indices, y_indices = np.meshgrid(np.arange(img_w), np.arange(img_h))
-
-        # Знак сменился из-за учета направления смещения convergence
         map_x_left = (x_indices + shift_val).astype(np.float32)
         map_x_right = (x_indices - shift_val).astype(np.float32)
+        map_y = y_indices.astype(np.float32)
+
+        # ИСПРАВЛЕНО: Меняем BORDER_REPLICATE на BORDER_CONSTANT (заливка черным)
+        # Это мгновенно убивает размазывание "тянущихся" пикселей ореола по краям контрастных зон
+        left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+        right_eye = cv2.remap(image, map_x_right, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+        """
+        conv_bias = state_obj.convergence / 100.0
+
+
+        # Вычисление параллакса стереобазы - старый метод
+        depth_normalized = depth_map.astype(float) / 255.0
+        x_indices, y_indices = np.meshgrid(np.arange(img_w), np.arange(img_h))
+        shift_val = depth_normalized * (state_obj.disparity / 2.0)
+
+        map_x_left = (x_indices - shift_val).astype(np.float32)
+        map_x_right = (x_indices + shift_val).astype(np.float32)
         map_y = y_indices.astype(np.float32)
 
         left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         right_eye = cv2.remap(image, map_x_right, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-        # Режим сборки горизонтальной стереопары (Side-by-Side)
+        # === АЛГОРИТМ АВТОМАТИЧЕСКОГО КРОПА МЕРТВЫХ ЗОН ===
+        # Вычисляем максимальный возможный горизонтальный сдвиг пикселей на основе текущей стереобазы и конвергенции
+        max_shift = int(np.ceil(max(abs(state_obj.disparity / 2.0 + (conv_bias * (state_obj.disparity / 2.0))), 2)))
+        
+        # Обрезаем черные технические поля по краям обоих ракурсов (безопасный отступ слева и справа)
+        if max_shift < img_w // 4:  # Предохранитель от чрезмерного зарезания картинки
+            left_eye = left_eye[:, max_shift : img_w - max_shift]
+            right_eye = right_eye[:, max_shift : img_w - max_shift]
+            
+            # Растягиваем очищенные от мертвых зон ракурсы обратно под исходную ширину
+            left_eye = cv2.resize(left_eye, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+            right_eye = cv2.resize(right_eye, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+
         if state_obj.view_mode == "stereopair":
             return np.hstack((left_eye, right_eye))
 
-        # Режим анаглифа: Прямой вызов математического метода по строковому имени
         elif state_obj.view_mode == "anaglyph":
             mixer_func = getattr(self, state_obj.method_name, None)
             if mixer_func is not None:

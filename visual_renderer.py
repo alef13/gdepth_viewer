@@ -69,6 +69,35 @@ class VisualRenderer(object):
         if self.state.show_help:
             canvas = self._draw_help(canvas)
 
+        # === РЕНДЕРИНГ ВИДЖЕТА ОБРАТНОГО ОТСЧЕТА СЛАЙД-ШОУ ===
+        if self.state.slideshow_active:
+            canvas = self._draw_slideshow_timer(canvas)
+
+        return canvas
+
+    def _draw_slideshow_timer(self, canvas):
+        """Отрисовывает аккуратный плавающий виджет обратного отсчета в левом нижнем углу."""
+        scr_h = self.state.screen_h
+        
+        # ИСПРАВЛЕНО: Прямое вычитание секунд без деления на 1000
+        remaining_secs = max(0.0, self.state.slideshow_delay - self.state.slideshow_accumulator)
+        
+        timer_text = f"NEXT IN: {remaining_secs:.1f}s"
+        
+        box_w, box_h = 180, 40
+        start_x = 20
+        start_y = scr_h - box_h - 20
+        
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), (0, 0, 0), -1)
+        border_color = (0, 0, 255) if remaining_secs <= 1.0 else (0, 255, 0)
+        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), border_color, 1)
+        cv2.addWeighted(overlay, 0.70, canvas, 0.30, 0, canvas)
+        
+        cv2.putText(
+            canvas, timer_text, (start_x + 15, start_y + 25),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA
+        )
         return canvas
 
     def _draw_osd(self, canvas, current_filename, total_count, file_index):

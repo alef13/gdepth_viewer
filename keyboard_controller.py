@@ -6,6 +6,7 @@ import os
 import random
 import sys
 import cv2
+import time
 
 from anaglyph_processor import AnaglyphProcessor
 from gdepth_processor import GDepthProcessor
@@ -83,7 +84,9 @@ class KeyboardController(object):
         self.get_async_key.restype = ctypes.c_short
         
         self.move_step = 25
-        self.slideshow_accumulator = 0
+        self.slideshow_start_time = time.time()
+        self.state.slideshow_accumulator = 0.0
+
 
     def get_current_file(self):
         return self.files[self.file_index]
@@ -92,6 +95,7 @@ class KeyboardController(object):
         return self.ap.render_view_mode(self.state)
 
     def _switch_file(self, direction):
+        """Внутренний метод безопасного переключения контейнеров с учетом порядка."""
         if self.state.slideshow_active and self.state.slideshow_order == "random" and len(self.files) > 1:
             next_idx = self.file_index
             while next_idx == self.file_index:
@@ -100,14 +104,15 @@ class KeyboardController(object):
         else:
             self.file_index = (self.file_index + direction) % len(self.files)
 
-        self.slideshow_accumulator = 0
+        # ИСПРАВЛЕНО: Сбрасываем метку реального времени при смене кадра
+        self.slideshow_start_time = time.time()
+        self.state.slideshow_accumulator = 0.0
         try:
             dp = GDepthProcessor(self.files[self.file_index])
             self.ap = AnaglyphProcessor(dp)
             self.state.has_depth = dp.has_depth
             img_h, img_w, _ = dp.primary_img.shape
             
-            # Вызов утилиты вычисления масштаба из VisualRenderer
             self.state.scale = self.renderer.get_fit_to_screen_scale(img_w, img_h)
             self.state.offset_x, self.state.offset_y = 0, 0
             self.state.need_update = True
@@ -127,13 +132,18 @@ class KeyboardController(object):
     def handle_input(self, image_cached):
         """Главный диспетчер обработки сигналов ввода и таймера слайд-шоу."""
         loop_delay_ms = 15
-        # Используем waitKey исключительно как системный триггер OpenCV для прорисовки окон
-        raw_key = cv2.waitKey(loop_delay_ms)
+        cv2.waitKey(loop_delay_ms)
         
+        # ИСПРАВЛЕНО: Расчет задержки слайд-шоу по реальным астрономическим часам ОС
         if self.state.slideshow_active:
-            self.slideshow_accumulator += loop_delay_ms
-            if self.slideshow_accumulator >= (self.state.slideshow_delay * 1000):
+            current_elapsed = time.time() - self.slideshow_start_time
+            self.state.slideshow_accumulator = current_elapsed
+            
+            # Проверяем, превысило ли реальное прошедшее время установленный интервал
+            if current_elapsed >= self.state.slideshow_delay:
                 self._switch_file(1)
+        else:
+            self.state.slideshow_accumulator = 0.0
 
         # Выход по аппаратному ESC (0x1B)
         if self.get_async_key(0x1B) < 0:
@@ -193,7 +203,9 @@ class KeyboardController(object):
 
         if self._is_pressed(self.VK_F9):
             self.state.slideshow_active = not self.state.slideshow_active
-            self.slideshow_accumulator = 0
+            # Фиксируем системное время в момент ручного старта слайд-шоу
+            self.slideshow_start_time = time.time()
+            self.state.slideshow_accumulator = 0.0
 
         if self._is_pressed(self.VK_F10):
             self.state.slideshow_order = "random" if self.state.slideshow_order == "sequential" else "sequential"
