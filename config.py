@@ -42,9 +42,12 @@ class ViewerState(BaseModel):
         description="Порядок слайд-шоу: sequential (по очереди) или random (случайный)"
     )
 
-    # === ТЕКУЩИЙ ПРОГРЕСС ТАЙМЕРА СЛАЙД-ШОУ (В СЕКУНДАХ) ===
     slideshow_accumulator: float = Field(default=0.0, description="Накопленное реальное время текущего слайда в секундах")
 
+    # === НАСТРОЙКИ ИНТЕРАКТИВНОГО ПАРАЛЛАКСА (FACEBOOK 3D) ===
+    fb_3d_mode: bool = Field(default=False, description="Флаг активности режима Facebook 3D")
+    mouse_dx: float = Field(default=0.0, description="Текущее отклонение мыши по X (-1.0 до 1.0)")
+    mouse_dy: float = Field(default=0.0, description="Текущее отклонение мыши по Y (-1.0 до 1.0)")
 
     @field_validator("blur")
     @classmethod

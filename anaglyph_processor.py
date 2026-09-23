@@ -158,46 +158,42 @@ class AnaglyphProcessor(object):
             depth_normalized = (np.exp(depth_normalized * 3.0) - 1.0) / (np.exp(3.0) - 1.0)
             depth_normalized = np.clip(depth_normalized, 0.0, 1.0)
 
-        """
-        # Вычисление сдвигов параллакса и конвергенции
         conv_bias = state_obj.convergence / 100.0
-        shift_val = (depth_normalized - 0.5 - conv_bias) * (state_obj.disparity / 2.0)
 
         x_indices, y_indices = np.meshgrid(np.arange(img_w), np.arange(img_h))
+
+        # === ДИНАМИЧЕСКИЙ БЛОК FACEBOOK 3D LOOK ===
+        if state_obj.fb_3d_mode:
+            # В режиме Facebook 3D мы используем ОДИНАКОВЫЙ сдвиг для обоих глаз (монокулярный параллакс)
+            # Величина сдвига зависит от положения мыши (mouse_dx, mouse_dy), disparity и глубины пикселя
+            # Объекты в плоскости схождения (depth_normalized - 0.5 - conv_bias == 0) остаются неподвижными
+            #depth_factor = (depth_normalized - 0.5 - conv_bias) * (state_obj.disparity)
+            depth_factor = depth_normalized * state_obj.disparity
+            
+            shift_x = depth_factor * state_obj.mouse_dx
+            shift_y = depth_factor * state_obj.mouse_dy
+
+            map_x_left = (x_indices + shift_x).astype(np.float32)
+            map_y = (y_indices + shift_y).astype(np.float32)
+            left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+            return left_eye
+
+        # Стандартный бинокулярный горизонтальный параллакс для стереопар и анаглифов
+        #shift_val = (depth_normalized - 0.5 - conv_bias) * (state_obj.disparity / 2.0)
+        shift_val = depth_normalized * (state_obj.disparity / 2.0)
         map_x_left = (x_indices + shift_val).astype(np.float32)
         map_x_right = (x_indices - shift_val).astype(np.float32)
         map_y = y_indices.astype(np.float32)
 
-        # ИСПРАВЛЕНО: Меняем BORDER_REPLICATE на BORDER_CONSTANT (заливка черным)
-        # Это мгновенно убивает размазывание "тянущихся" пикселей ореола по краям контрастных зон
+        # Пересчет ремаппинга с использованием константного заполнения границ кадра
         left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
         right_eye = cv2.remap(image, map_x_right, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-        """
-        conv_bias = state_obj.convergence / 100.0
 
-
-        # Вычисление параллакса стереобазы - старый метод
-        depth_normalized = depth_map.astype(float) / 255.0
-        x_indices, y_indices = np.meshgrid(np.arange(img_w), np.arange(img_h))
-        shift_val = depth_normalized * (state_obj.disparity / 2.0)
-
-        map_x_left = (x_indices - shift_val).astype(np.float32)
-        map_x_right = (x_indices + shift_val).astype(np.float32)
-        map_y = y_indices.astype(np.float32)
-
-        left_eye = cv2.remap(image, map_x_left, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-        right_eye = cv2.remap(image, map_x_right, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-
-        # === АЛГОРИТМ АВТОМАТИЧЕСКОГО КРОПА МЕРТВЫХ ЗОН ===
-        # Вычисляем максимальный возможный горизонтальный сдвиг пикселей на основе текущей стереобазы и конвергенции
+        # Алгоритм автоматического кропа мертвых зон (выполняется только в обычном 3D режиме)
         max_shift = int(np.ceil(max(abs(state_obj.disparity / 2.0 + (conv_bias * (state_obj.disparity / 2.0))), 2)))
-        
-        # Обрезаем черные технические поля по краям обоих ракурсов (безопасный отступ слева и справа)
-        if max_shift < img_w // 4:  # Предохранитель от чрезмерного зарезания картинки
+        if max_shift < img_w // 4:
             left_eye = left_eye[:, max_shift : img_w - max_shift]
             right_eye = right_eye[:, max_shift : img_w - max_shift]
-            
-            # Растягиваем очищенные от мертвых зон ракурсы обратно под исходную ширину
             left_eye = cv2.resize(left_eye, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
             right_eye = cv2.resize(right_eye, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
 

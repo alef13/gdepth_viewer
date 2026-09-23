@@ -12,7 +12,7 @@ class VisualRenderer(object):
     """
 
     def __init__(self, state_obj, anaglyph_processor):
-        self.state = state_obj
+        self.state = state_obj  # Инжектируем стейт строго в поле self.state
         self.ap = anaglyph_processor
 
     def get_fit_to_screen_scale(self, img_w, img_h):
@@ -75,40 +75,20 @@ class VisualRenderer(object):
 
         return canvas
 
-    def _draw_slideshow_timer(self, canvas):
-        """Отрисовывает аккуратный плавающий виджет обратного отсчета в левом нижнем углу."""
-        scr_h = self.state.screen_h
-        
-        # ИСПРАВЛЕНО: Прямое вычитание секунд без деления на 1000
-        remaining_secs = max(0.0, self.state.slideshow_delay - self.state.slideshow_accumulator)
-        
-        timer_text = f"NEXT IN: {remaining_secs:.1f}s"
-        
-        box_w, box_h = 180, 40
-        start_x = 20
-        start_y = scr_h - box_h - 20
-        
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), (0, 0, 0), -1)
-        border_color = (0, 0, 255) if remaining_secs <= 1.0 else (0, 255, 0)
-        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), border_color, 1)
-        cv2.addWeighted(overlay, 0.70, canvas, 0.30, 0, canvas)
-        
-        cv2.putText(
-            canvas, timer_text, (start_x + 15, start_y + 25),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA
-        )
-        return canvas
-
     def _draw_osd(self, canvas, current_filename, total_count, file_index):
         """Внутренний метод отрисовки OSD-сайдбара."""
         scr_h = self.state.screen_h
         m_name = self.ap.method_details.get(self.state.method_name, self.state.method_name)
-        mode_status = self.state.view_mode.upper() if self.state.has_depth else "2D FLAT IMAGE (NO 3D METADATA)"
+        
+        # Защита и реактивный статус вывода режима
+        if not self.state.has_depth:
+            mode_status = "2D FLAT IMAGE (NO 3D METADATA)"
+        else:
+            mode_status = "FACEBOOK 3D LOOK" if self.state.fb_3d_mode else self.state.view_mode.upper()
+            
         order_label = "SEQ" if self.state.slideshow_order == "sequential" else "RND"
         ss_status = f"ACTIVE ({order_label} | {self.state.slideshow_delay:.1f}s)" if self.state.slideshow_active else "OFF"
 
-        # Очищенный от отбивок и подсказок список параметров
         osd_lines = [
             f"FILE: {current_filename} [{file_index + 1}/{total_count}]",
             f"VIEW MODE: {mode_status}",
@@ -124,12 +104,10 @@ class VisualRenderer(object):
             f"SLIDESHOW PLAYBACK: {ss_status}"
         ]
         
-        # Полупрозрачная подложка сайдбара на всю высоту у левого края экрана
         overlay = canvas.copy()
         cv2.rectangle(overlay, (0, 0), (520, scr_h), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.65, canvas, 0.35, 0, canvas)
 
-        # Вывод текста OSD
         y_pos = 45
         for line in osd_lines:
             cv2.putText(canvas, line, (25, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
@@ -153,6 +131,7 @@ class VisualRenderer(object):
             "[ F8 ]              Export Pydantic state backup dump",
             "[ F9 ]              Toggle Slideshow autoplay ON / OFF",
             "[ F10 ]             Toggle Slideshow Order (SEQ / SHUFFLE)",
+            "[ F11 ]             Toggle Interactive Facebook 3D Look (Mouse Mode)",
             "--- RED-CYAN ANAGLYPH MATRICES ---",
             "[ Q W E R T Y U I O P ] -> 10 basic empirical methods",
             "--- ADVANCED MATRICES ---",
@@ -170,7 +149,6 @@ class VisualRenderer(object):
             "[ ARROW KEYS ]      -> Pan oversized image matrix",
         ]
         
-        # Сайдбар помощи шириной 580 пикселей у правого края экрана на всю высоту
         box_w = 580
         start_x = scr_w - box_w
 
@@ -178,10 +156,33 @@ class VisualRenderer(object):
         cv2.rectangle(overlay, (start_x, 0), (scr_w, scr_h), (15, 15, 15), -1)
         cv2.addWeighted(overlay, 0.85, canvas, 0.15, 0, canvas)
 
-        # Вывод текста помощи
         y_pos = 45
         for line in help_lines:
-            color = (0, 255, 255) if (line.startswith("===") or line.startswith("---")) else (255, 255, 255)
+            color = (0, 255, 255) if (line.startswith("=== ") or line.startswith("---")) else (255, 255, 255)
             cv2.putText(canvas, line, (start_x + 25, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.44, color, 1, cv2.LINE_AA)
             y_pos += 26
+        return canvas
+
+    def _draw_slideshow_timer(self, canvas):
+        """Отрисовывает аккуратный плавающий виджет обратного отсчета в левом нижнем углу."""
+        scr_h = self.state.screen_h
+        
+        # Исправлено: Читаем аккумулированное время строго через префикс self.state
+        remaining_secs = max(0.0, self.state.slideshow_delay - self.state.slideshow_accumulator)
+        timer_text = f"NEXT IN: {remaining_secs:.1f}s"
+        
+        box_w, box_h = 180, 40
+        start_x = 20
+        start_y = scr_h - box_h - 20
+        
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), (0, 0, 0), -1)
+        border_color = (0, 0, 255) if remaining_secs <= 1.0 else (0, 255, 0)
+        cv2.rectangle(overlay, (start_x, start_y), (start_x + box_w, start_y + box_h), border_color, 1)
+        cv2.addWeighted(overlay, 0.70, canvas, 0.30, 0, canvas)
+        
+        cv2.putText(
+            canvas, timer_text, (start_x + 15, start_y + 25),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA
+        )
         return canvas

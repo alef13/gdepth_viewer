@@ -122,6 +122,9 @@ def main():
             all_files, file_index, window_name, ap, state, renderer
         )
 
+        # Регистрируем системный обработчик мыши OpenCV через созданный контроллер
+        cv2.setMouseCallback(window_name, controller.mouse_callback)
+
         print(
             "[+] Просмотрщик запущен. Полная декомпозиция архитектуры SOLID выполнена."
         )
@@ -134,7 +137,7 @@ def main():
         print(
             "    [ F7 ] МИКРОРЕЛЬЕФ  | [ F8 ] Снять ДАМП    | [ F9 ] СЛАЙД-ШОУ ВКЛ/ВЫКЛ"
         )
-        print("    [ F10 ] Режим слайд-шоу (По очереди / Шаффл)")
+        print("    [ F10 ] Шаффл папки  | [ F11 ] Facebook 3D Look")
         print(
             "    -----------------------------------------------------------------------"
         )

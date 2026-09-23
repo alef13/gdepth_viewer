@@ -1,12 +1,12 @@
 ﻿# -*- coding: utf-8 -*-
-"""Модуль аппаратного перехвата ввода, независимый от языковой раскладки."""
+"""Модуль асинхронного перехвата ввода и управления сессией слайд-шоу."""
 
 import ctypes
 import os
 import random
 import sys
-import cv2
 import time
+import cv2
 
 from anaglyph_processor import AnaglyphProcessor
 from gdepth_processor import GDepthProcessor
@@ -33,9 +33,10 @@ class KeyboardController(object):
         self.VK_TAB = 0x09
         self.VK_INSERT, self.VK_DELETE = 0x2D, 0x2E
         
-        # Функциональный ряд F1-F10
+        # Функциональный ряд F1-F11
         self.VK_F1, self.VK_F2, self.VK_F3, self.VK_F4, self.VK_F5 = 0x70, 0x71, 0x72, 0x73, 0x74
         self.VK_F6, self.VK_F7, self.VK_F8, self.VK_F9, self.VK_F10 = 0x75, 0x76, 0x77, 0x78, 0x79
+        self.VK_F11 = 0x7A  
         
         # Цифровой блок масштаба и параметров (0, 1, 4, 5, 7, 8)
         self.VK_0, self.VK_1 = 0x30, 0x31
@@ -49,11 +50,12 @@ class KeyboardController(object):
         self.VK_OEM_4 = 0xDB                             # Физическая клавиша '[' (хетч Х)
         self.VK_OEM_6 = 0xDD                             # Физическая клавиша ']' (хетч Ъ)
         
-        # Реактивная карта триггеров для защиты от дребезга контактов (одиночные нажатия)
+        # Словарь key_states инициализируется гарантированно до вызова любых циклов
         self.key_states = {
             self.VK_TAB: False, self.VK_PRIOR: False, self.VK_NEXT: False,
             self.VK_F1: False, self.VK_F2: False, self.VK_F3: False, self.VK_F4: False, self.VK_F5: False,
             self.VK_F6: False, self.VK_F7: False, self.VK_F8: False, self.VK_F9: False, self.VK_F10: False,
+            self.VK_F11: False,  
             self.VK_OEM_4: False, self.VK_OEM_6: False
         }
         
@@ -76,6 +78,7 @@ class KeyboardController(object):
             0x58: "green_magenta_dubois"       # X
         }
         
+        # Заполняем состояния для буквенной карты
         for vk_code in self.vk_method_map:
             self.key_states[vk_code] = False
 
@@ -87,7 +90,6 @@ class KeyboardController(object):
         self.slideshow_start_time = time.time()
         self.state.slideshow_accumulator = 0.0
 
-
     def get_current_file(self):
         return self.files[self.file_index]
 
@@ -95,7 +97,6 @@ class KeyboardController(object):
         return self.ap.render_view_mode(self.state)
 
     def _switch_file(self, direction):
-        """Внутренний метод безопасного переключения контейнеров с учетом порядка."""
         if self.state.slideshow_active and self.state.slideshow_order == "random" and len(self.files) > 1:
             next_idx = self.file_index
             while next_idx == self.file_index:
@@ -104,7 +105,6 @@ class KeyboardController(object):
         else:
             self.file_index = (self.file_index + direction) % len(self.files)
 
-        # ИСПРАВЛЕНО: Сбрасываем метку реального времени при смене кадра
         self.slideshow_start_time = time.time()
         self.state.slideshow_accumulator = 0.0
         try:
@@ -128,25 +128,31 @@ class KeyboardController(object):
         else:
             self.key_states[vk_code] = False
         return False
+    def mouse_callback(self, event, x, y, flags, param):
+        """Отслеживает перемещение мыши для расчета динамического параллакса Facebook 3D."""
+        if self.state.fb_3d_mode and event == cv2.EVENT_MOUSEMOVE:
+            scr_w, scr_h = self.state.screen_w, self.state.screen_h
+            center_x = scr_w / 2.0
+            center_y = scr_h / 2.0
+            
+            self.state.mouse_dx = -((x - center_x) / center_x)
+            self.state.mouse_dy = -((y - center_y) / center_y)
+            self.state.need_update = True
 
     def handle_input(self, image_cached):
         """Главный диспетчер обработки сигналов ввода и таймера слайд-шоу."""
         loop_delay_ms = 15
-        cv2.waitKey(loop_delay_ms)
+        raw_key = cv2.waitKey(loop_delay_ms)
         
-        # ИСПРАВЛЕНО: Расчет задержки слайд-шоу по реальным астрономическим часам ОС
         if self.state.slideshow_active:
             current_elapsed = time.time() - self.slideshow_start_time
             self.state.slideshow_accumulator = current_elapsed
-            
-            # Проверяем, превысило ли реальное прошедшее время установленный интервал
             if current_elapsed >= self.state.slideshow_delay:
                 self._switch_file(1)
         else:
             self.state.slideshow_accumulator = 0.0
 
-        # Выход по аппаратному ESC (0x1B)
-        if self.get_async_key(0x1B) < 0:
+        if self.get_async_key(0x1B) < 0:  # ESC
             return False
 
         # --- СКАНИРОВАНИЕ МАТРИЦ АНАГЛИФА ПО ХАРДВЕРНЫМ КОДАМ БУКВЕННЫХ КЛАВИШ ---
@@ -156,12 +162,12 @@ class KeyboardController(object):
                 self.state.method_name = method_name
                 self.state.need_update = True
 
-        # --- СКВОЗНОЙ КНОПОЧНЫЙ ОПРОС РЯДА F1-F10 И МОДИФИКАТОРОВ ---
+        # --- СКВОЗНОЙ КНОПОЧНЫЙ ОПРОС РЯДА F1-F11 И МОДИФИКАТОРОВ ---
         if self._is_pressed(self.VK_F1):
             self.state.show_help = not self.state.show_help
 
         if self._is_pressed(self.VK_F2):
-            base_name = self.files[self.file_index].rsplit('.', 1)[0]
+            base_name = self.files[self.file_index].rsplit('.', 1)
             m_suffix = "Original" if self.state.view_mode == "primary" else ("Stereopair" if self.state.view_mode == "stereopair" else f"DepthMap_{self.state.depth_interpretation.upper()}" if self.state.view_mode == "depthmap" else self.ap.method_details[self.state.method_name].replace(" ", "_"))
             out_filename = f"{base_name}_{m_suffix}_d{self.state.disparity}_b{self.state.blur}_o{self.state.opacity:.2f}.png"
             try:
@@ -203,21 +209,33 @@ class KeyboardController(object):
 
         if self._is_pressed(self.VK_F9):
             self.state.slideshow_active = not self.state.slideshow_active
-            # Фиксируем системное время в момент ручного старта слайд-шоу
             self.slideshow_start_time = time.time()
             self.state.slideshow_accumulator = 0.0
 
         if self._is_pressed(self.VK_F10):
             self.state.slideshow_order = "random" if self.state.slideshow_order == "sequential" else "sequential"
 
-        # Управление интервалом слайд-шоу по аппаратным кодам клавиш OEM [ и ]
-        if self._is_pressed(self.VK_OEM_4):  # Физическая клавиша [
+        # F11 - Включение / выключение интерактивного параллакса Facebook 3D Look
+        if self._is_pressed(self.VK_F11):
+            self.state.fb_3d_mode = not self.state.fb_3d_mode
+            if self.state.fb_3d_mode:
+                cv2.setMouseCallback(self.win_name, self.mouse_callback)
+                print("[*] Режим Facebook 3D Look: АКТИВИРОВАН")
+            else:
+                cv2.setMouseCallback(self.win_name, lambda *args: None)
+                self.state.mouse_dx = 0.0
+                self.state.mouse_dy = 0.0
+                print("[*] Режим Facebook 3D Look: ВЫКЛЮЧЕН")
+            self.state.need_update = True
+
+        # Изменение интервала слайд-шоу переведено на self.state
+        if self._is_pressed(self.VK_OEM_4):  # Кнопка [
             try:
                 self.state.slideshow_delay = max(0.5, self.state.slideshow_delay - 0.5)
                 print(f"[*] Интервал слайд-шоу уменьшен: {self.state.slideshow_delay:.1f} сек.")
             except Exception: pass
 
-        if self._is_pressed(self.VK_OEM_6):  # Физическая клавиша ]
+        if self._is_pressed(self.VK_OEM_6):  # Кнопка ]
             try:
                 self.state.slideshow_delay = min(30.0, self.state.slideshow_delay + 0.5)
                 print(f"[*] Интервал слайд-шоу увеличен: {self.state.slideshow_delay:.1f} сек.")
@@ -258,7 +276,8 @@ class KeyboardController(object):
         if self.get_async_key(self.VK_OEM_PLUS) < 0: self.state.scale *= 1.05
         elif self.get_async_key(self.VK_OEM_MINUS) < 0: self.state.scale /= 1.05
         elif self.get_async_key(self.VK_0) < 0:
-            self.state.scale = 1.0; self.state.offset_x, self.state.offset_y = 0, 0
+            self.state.scale = 1.0
+            self.state.offset_x, self.state.offset_y = 0, 0
         elif self.get_async_key(self.VK_1) < 0:
             h, w, _ = image_cached.shape
             self.state.scale = self.renderer.get_fit_to_screen_scale(w, h)
