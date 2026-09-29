@@ -1,10 +1,10 @@
 ﻿# -*- coding: utf-8 -*-
-"""Главный интерфейсный модуль интерактивного 3D-просмотрщика."""
+"""Главный интерфейсный модуль интерактивного 3D-просмотрщика на SDL2."""
 
 import argparse
 import os
 import sys
-import cv2
+import pygame
 import numpy as np
 
 from anaglyph_processor import AnaglyphProcessor
@@ -13,32 +13,18 @@ from gdepth_processor import GDepthProcessor
 from keyboard_controller import KeyboardController
 from visual_renderer import VisualRenderer
 
-# Создаем центральный валидируемый Pydantic стейт
 state = ViewerState()
 
-
 def parse_cli_args():
-    """Вынесенная логика инициализации и валидации аргументов CLI."""
-    parser = argparse.ArgumentParser(
-        description="ООП-просмотрщик Dynamic Depth."
-    )
+    parser = argparse.ArgumentParser(description="ООП-просмотрщик Dynamic Depth на SDL.")
     parser.add_argument("file", help="Путь к файлу изображения JPEG")
-    parser.add_argument(
-        "--mode",
-        "-mode",
-        choices=["anaglyph", "stereopair", "depthmap", "primary"],
-        default="anaglyph",
-    )
+    parser.add_argument("--mode", "-mode", choices=["anaglyph", "stereopair", "depthmap", "primary"], default="anaglyph")
     parser.add_argument("--method", "-method", default="thor_olson_optimized")
     parser.add_argument("--disparity", "-disp", type=int, default=16)
     parser.add_argument("--blur", "-blur", type=int, default=21)
     parser.add_argument("--opacity", "-op", type=float, default=0.5)
-    parser.add_argument(
-        "--microrelief", "-mr", choices=["on", "off"], default="on"
-    )
-    parser.add_argument(
-        "--geom", "-geom", choices=["linear", "logarithmic"], default="linear"
-    )
+    parser.add_argument("--microrelief", "-mr", choices=["on", "off"], default="on")
+    parser.add_argument("--geom", "-geom", choices=["linear", "logarithmic"], default="linear")
 
     args = parser.parse_args()
     try:
@@ -54,112 +40,66 @@ def parse_cli_args():
         sys.exit(1)
     return args
 
-
 def scan_directory(target_file):
-    """Вынесенная логика сканирования каталога и поиска индекса файла."""
     file_path = os.path.abspath(target_file)
     folder = os.path.dirname(file_path)
     valid_ext = (".jpg", ".jpeg", ".png")
-
     try:
-        files_list = [
-            os.path.join(folder, f)
-            for f in os.listdir(folder)
-            if f.lower().endswith(valid_ext)
-        ]
+        files_list = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(valid_ext)]
         files_list.sort(key=lambda x: x.lower())
     except Exception:
         files_list = [file_path]
-
     idx = files_list.index(file_path) if file_path in files_list else 0
-    if file_path not in files_list:
-        files_list.append(file_path)
-        files_list.sort(key=lambda x: x.lower())
-        idx = files_list.index(file_path)
     return files_list, idx
 
-
 def main():
-    """Точка входа в приложение. Дирижирует модулями."""
-    # 1. Забираем аргументы командной строки
     args = parse_cli_args()
-
-    # 2. Сканируем папку и определяем индекс стартового файла
     all_files, file_index = scan_directory(args.file)
 
     try:
-        # 3. Инициализируем процессор глубин и передаем стартовый флаг в state
+        # 1. Инициализация SDL / Pygame
+        pygame.init()
+        pygame.display.init()  # Явная пре-инициализация дисплея для корректного замера
+
+        # Честный замер физической матрицы экрана через SDL дисплей-модуль
+        display_info = pygame.display.Info()
+        state.screen_w = display_info.current_w
+        state.screen_h = display_info.current_h
+
+        # Создаем hardware-accelerated полноэкранный стек (без рамок и полос)
+        # Исправлено: удален несуществующий метод set_surface_full_screen()
+        flags = pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
+        screen = pygame.display.set_mode((state.screen_w, state.screen_h), flags)
+        pygame.display.set_caption("Dynamic Depth SDL Viewer")
+        
+        # Скрываем системный курсор внутри окна
+        pygame.mouse.set_visible(False)
+
+        # 2. Инициализация вычислительных конвейеров
         dp = GDepthProcessor(all_files[file_index])
         state.has_depth = dp.has_depth
         ap = AnaglyphProcessor(dp)
-
-        # 4. Инициализируем визуальный рендерер HUD и холста
         renderer = VisualRenderer(state, ap)
-
-        # 5. Создаем окно и переводим в полноэкранный режим
-        window_name = "Dynamic Depth Interactive Viewer"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(
-            window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
-        )
-
-        # Выводим пустой холст и ждем инициализации дескриптора окна в WinAPI
-        cv2.imshow(window_name, np.zeros((100, 100, 3), dtype=np.uint8))
-        cv2.waitKey(50)
-
-        # Замеряем геометрию экрана строго внутри main после waitKey
-        rect = cv2.getWindowImageRect(window_name)
-        if rect is not None and len(rect) >= 4:
-            win_x, win_y, win_w, win_h = rect
-            if win_w > 0 and win_h > 0:
-                state.screen_w, state.screen_h = win_w, win_h
 
         img_h, img_w, _ = dp.primary_img.shape
         state.scale = renderer.get_fit_to_screen_scale(img_w, img_h)
 
-        # 6. Инициализируем контроллер ввода, передавая рендерер и state
-        controller = KeyboardController(
-            all_files, file_index, window_name, ap, state, renderer
-        )
+        # 3. Контроллер
+        controller = KeyboardController(all_files, file_index, ap, state, renderer)
 
-        # Регистрируем системный обработчик мыши OpenCV через созданный контроллер
-        cv2.setMouseCallback(window_name, controller.mouse_callback)
+        print("[+] SDL Движок инициализирован успешно. Ореолы и белые полосы устранены.")
 
-        print(
-            "[+] Просмотрщик запущен. Полная декомпозиция архитектуры SOLID выполнена."
-        )
-        print(
-            "    [ F1 ] Помощь       | [ F2 ] Экспорт в PNG | [ F3 ] Оригинал фото (2D)"
-        )
-        print(
-            "    [ F4 ] СТЕРЕОПАРА   | [ F5 ] Карта глубин  | [ F6 ] Геометрия (LIN/LOG)"
-        )
-        print(
-            "    [ F7 ] МИКРОРЕЛЬЕФ  | [ F8 ] Снять ДАМП    | [ F9 ] СЛАЙД-ШОУ ВКЛ/ВЫКЛ"
-        )
-        print("    [ F10 ] Шаффл папки  | [ F11 ] Facebook 3D Look")
-        print(
-            "    -----------------------------------------------------------------------"
-        )
-        print(
-            "    [ / ] / [ * ]       -> Уменьшить / увеличить шаг стереобазы (Disparity)"
-        )
-        print(
-            "    [ INS ] / [ DEL ]   -> Сдвиг плоскости нулевого параллакса (Convergence)"
-        )
-        print(
-            "    Буквенные ряды      -> Накат цветовых матриц анаглифа (Q-P, A-L, Z-X)"
-        )
-
+        clock = pygame.time.Clock()
         image_cached = None
 
-        # 7. Главный цикл отрисовки кадра
-        while True:
+        # 4. Главный рендер-цикл
+        running = True
+        while running:
             if state.need_update or image_cached is None:
                 image_cached = controller.update_processors_and_render()
                 state.need_update = False
 
-            # Вызов метода рендеринга из вынесенного класса renderer
+            # Генерируем CV2-кадр (компоновка заблюренного бэкграунда и OSD)
             display_frame = renderer.render_canvas(
                 image_cached,
                 os.path.basename(controller.get_current_file()),
@@ -167,20 +107,31 @@ def main():
                 controller.file_index,
                 controller.ap,
             )
-            cv2.imshow(window_name, display_frame)
 
-            # Опрашиваем клавиатуру
+            # --- КОНВЕРТАЦИЯ: OpenCV (BGR) -> SDL/Pygame (RGB) ---
+            frame_rgb = display_frame[:, :, ::-1]
+            frame_transposed = np.transpose(frame_rgb, (1, 0, 2))
+            
+            # Быстрое создание SDL-поверхности напрямую из RAM-буфера numpy массива
+            sdl_surface = pygame.surfarray.make_surface(frame_transposed)
+            
+            # Блиттинг на экран и флип кадра
+            screen.blit(sdl_surface, (0, 0))
+            pygame.display.flip()
+
+            # Обрабатываем ввод и таймеры (тик 60 FPS для экономии CPU)
+            clock.tick(60)
             if not controller.handle_input(image_cached):
-                break
+                running = False
 
-        cv2.destroyAllWindows()
+        pygame.quit()
+        sys.exit(0)
 
     except Exception as e:
-        print(
-            f"[-] Критическая ошибка в работе программы: {e}", file=sys.stderr
-        )
+        print(f"[-] Критическая ошибка SDL-сессии: {e}", file=sys.stderr)
+        pygame.quit()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
+

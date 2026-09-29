@@ -120,6 +120,7 @@ class VisualRenderer(object):
         help_lines = [
             "=== INTERACTIVE VIEWER HELP ===",
             "[ ESC ]             Exit viewport session",
+            "[ SPACE ]           Toggle Slideshow (Play / Pause)",
             "[ TAB ]             Toggle Left-Side OSD Panel",
             "[ F1 ]              Toggle this Help Window",
             "[ F2 ]              Export frame to PNG on disk",
