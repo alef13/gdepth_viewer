@@ -1,0 +1,31 @@
+=== INTERACTIVE VIEWER HELP ===
+[ ESC ]             Exit viewport session
+[ SPACE ]           Toggle Slideshow (Play / Pause)
+[ TAB ]             Toggle Left-Side OSD Panel
+[ F1 ]              Toggle this Help Window
+[ F2 ]              Export frame to PNG on disk
+[ F3 ]              Switch mode to Original Flat 2D Photo
+[ F4 ]              Switch mode to horizontal Stereopair
+[ F5 ]              Switch mode to Depth Map Jet Color
+[ F6 ]              Toggle Geometry (LINEAR / LOG)
+[ F7 ]              Toggle ВЧ-Microrelief ON / OFF
+[ F8 ]              Export Pydantic state backup dump
+[ F9 ]              Toggle Slideshow autoplay ON / OFF
+[ F10 ]             Toggle Slideshow Order (SEQ / SHUFFLE)
+[ F11 ]             Toggle Interactive Facebook 3D Look (Mouse Mode)
+--- RED-CYAN ANAGLYPH MATRICES ---
+[ Q W E R T Y U I O P ] -> 10 basic empirical methods
+--- ADVANCED MATRICES ---
+[ A S K L ]         -> Dubois, Olson, McAllister, Rossman
+[ D ]               -> Spectrum Optimized Olson Method
+[ Z ]               -> Green-Magenta Empirical Pure Matrix
+[ X ]               -> Green-Magenta Dubois Linear Method
+--- 3D MODIFIERS & CANVAS CONTROLS ---
+[ / ] / [ * ]       -> Scale Stereo Base down / up
+[ INS ] / [ DEL ]   -> Shift Parallax Plane up / down
+[ < ] / [ > ]       -> Scale Detail Filter down / up
+[ { ] / [ } ]       -> Scale Detail Strength down / up
+[ + ] / [ - ]       -> Canvas Zoom In / Zoom Out step 5%
+[ 0 ] / [ 1 ]       -> Reset scale / Auto-Fit to Screen
+[ ARROW KEYS ]      -> Pan oversized image matrix
+

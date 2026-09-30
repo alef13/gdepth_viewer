@@ -95,6 +95,9 @@ def main():
         # 4. Главный рендер-цикл
         running = True
         while running:
+            # Честный расчет дельты времени для плавного апдейта интерфейсов pygame_gui
+            time_delta = clock.tick(60) / 1000.0
+
             if state.need_update or image_cached is None:
                 image_cached = controller.update_processors_and_render()
                 state.need_update = False
@@ -115,12 +118,17 @@ def main():
             # Быстрое создание SDL-поверхности напрямую из RAM-буфера numpy массива
             sdl_surface = pygame.surfarray.make_surface(frame_transposed)
             
-            # Блиттинг на экран и флип кадра
+            # Блиттинг на экран
             screen.blit(sdl_surface, (0, 0))
+
+            # === ОБНОВЛЕНИЕ И ОТРИСОВКА ИНТЕРФЕЙСА ===
+            controller.ui.update(time_delta)      # Принудительно оживляем элементы GUI
+            controller.draw_ui_and_progress(screen) # Отрисовываем окно или прогресс-бар
+
+            # Вывод кадра из буфера на дисплей
             pygame.display.flip()
 
-            # Обрабатываем ввод и таймеры (тик 60 FPS для экономии CPU)
-            clock.tick(60)
+            # Обрабатываем ввод и таймеры
             if not controller.handle_input(image_cached):
                 running = False
 
