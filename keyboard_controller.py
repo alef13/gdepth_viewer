@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Модуль перехвата ввода событий SDL2 для Linux."""
+"""Модуль перехвата ввода событий SDL2 для Linux: логика переключения файлов."""
 
 import os
 import random
@@ -10,6 +10,7 @@ import pygame
 
 from anaglyph_processor import AnaglyphProcessor
 from gdepth_processor import GDepthProcessor
+
 
 class KeyboardController(object):
     """Класс-контроллер для обработки событий мыши и клавиатуры через SDL-шину."""
@@ -25,19 +26,41 @@ class KeyboardController(object):
         self.slideshow_start_time = time.time()
         self.state.slideshow_accumulator = 0.0
 
+        # Буфер для хранения перемешанной копии путей файлов
+        self._shuffle_pool = []
+
     def get_current_file(self):
         return self.files[self.file_index]
 
     def update_processors_and_render(self):
         return self.ap.render_view_mode(self.state)
 
+    def _generate_shuffle_pool(self):
+        """Создает и перемешивает копию списка файлов, исключая текущий на старте."""
+        self._shuffle_pool = list(self.files)
+        random.shuffle(self._shuffle_pool)
+        
+        # Чтобы избежать мгновенного повтора текущей картинки при активации режима:
+        if len(self._shuffle_pool) > 1 and self._shuffle_pool[-1] == self.files[self.file_index]:
+            # Перемещаем её с конца в начало пула
+            self._shuffle_pool.insert(0, self._shuffle_pool.pop())
+
     def _switch_file(self, direction):
-        if self.state.slideshow_active and self.state.slideshow_order == "random" and len(self.files) > 1:
-            next_idx = self.file_index
-            while next_idx == self.file_index:
-                next_idx = random.randint(0, len(self.files) - 1)
-            self.file_index = next_idx
+        if len(self.files) <= 1:
+            return
+
+        # === ЛОГИКА СЛУЧАЙНОГО ВЫБОРА БЕЗ ПОВТОРЕНИЙ (ЧЕРЕЗ КЛАССИЧЕСКИЙ POP) ===
+        if self.state.slideshow_active and self.state.slideshow_order == "random":
+            if not self._shuffle_pool:
+                self._generate_shuffle_pool()
+
+            # Выталкиваем имя последнего файла из перемешанного массива
+            next_file = self._shuffle_pool.pop()
+            
+            # Находим его физическое положение в основном списке, чтобы обновить OSD и счетчики
+            self.file_index = self.files.index(next_file)
         else:
+            # Обычный циклический режим
             self.file_index = (self.file_index + direction) % len(self.files)
 
         self.slideshow_start_time = time.time()
@@ -53,6 +76,7 @@ class KeyboardController(object):
             self.state.need_update = True
         except Exception as err:
             print(f"[-] Ошибка загрузки {self.files[self.file_index]}: {err}", file=sys.stderr)
+    # === ПРОДОЛЖЕНИЕ КЛАССА KeyboardController: ОБРАБОТКА ВВОДА ===
 
     def handle_input(self, image_cached):
         """Парсинг нативной очереди событий SDL."""
@@ -117,6 +141,8 @@ class KeyboardController(object):
                     self.state.slideshow_accumulator = 0.0
                 elif key == pygame.K_F10:
                     self.state.slideshow_order = "random" if self.state.slideshow_order == "sequential" else "sequential"
+                    # Принудительно очищаем старый пул, чтобы при переключении собралась новая случайная колода
+                    self._shuffle_pool = []
                 elif key == pygame.K_F11:
                     self.state.fb_3d_mode = not self.state.fb_3d_mode
                     if not self.state.fb_3d_mode:
@@ -197,5 +223,4 @@ class KeyboardController(object):
         self.state.view_mode = "anaglyph"
         self.state.method_name = method
         self.state.need_update = True
-
 

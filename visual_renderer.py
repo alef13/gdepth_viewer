@@ -1,14 +1,14 @@
 ﻿# -*- coding: utf-8 -*-
-"""Модуль графического рендеринга интерфейса, OSD и окна помощи."""
+"""Модуль графического рендеринга интерфейса: математика холста и косинусный фезернинг."""
 
 import cv2
 import numpy as np
 
 
 class VisualRenderer(object):
-    """Класс, отвечающий за компоновку финального кадра, масштабирование,
+    """Класс, отвечающий за компоновку финального кадра, масштабирование
 
-    отрисовку заблюренного фона, OSD и справочных окон Help.
+    и отрисовку заблюренного фона с градиентным уходом в черный цвет.
     """
 
     def __init__(self, state_obj, anaglyph_processor):
@@ -20,7 +20,7 @@ class VisualRenderer(object):
         return min(self.state.screen_w / img_w, self.state.screen_h / img_h)
 
     def render_canvas(self, processed_img, current_filename, total_count, file_index, anaglyph_proc):
-        """Формирует финальный холст с заблюренным фоном, OSD и Help."""
+        """Формирует финальный холст с заблюренным градиентным фоном и HUD."""
         self.ap = anaglyph_proc
 
         img_h, img_w, _ = processed_img.shape
@@ -46,41 +46,84 @@ class VisualRenderer(object):
 
         # === ГЕНЕРАЦИЯ ЗАБЛЮРЕННОГО ЗАДНЕГО ПЛАНА ===
         bg_fill = cv2.resize(processed_img, (scr_w, scr_h), interpolation=cv2.INTER_LINEAR)
-        bg_blurred = cv2.GaussianBlur(bg_fill, (99, 99), 0)
-        canvas = cv2.convertScaleAbs(bg_blurred, alpha=0.4, beta=0)
+        canvas_base = cv2.GaussianBlur(bg_fill, (99, 99), 0)
 
-        # 3. Наложение основного центрированного изображения поверх заблюренного фона
+        # 3. Расчет координат наложения основного кадра
         start_x = (scr_w - new_w) // 2 + self.state.offset_x
         start_y = (scr_h - new_h) // 2 + self.state.offset_y
 
+        # === СОЗДАНИЕ ПЛАВНОГО ГОРИЗОНТАЛЬНОГО ГРАДИЕНТА В ЧЕРНЫЙ ===
+        gradient_line = np.zeros(scr_w, dtype=np.float32)
+        img_left_edge = start_x
+        img_right_edge = start_x + new_w
+
+        for x in range(scr_w):
+            if x < img_left_edge:
+                gradient_line[x] = float(x) / img_left_edge if img_left_edge > 0 else 1.0
+            elif x >= img_right_edge:
+                denom = scr_w - img_right_edge
+                gradient_line[x] = 1.0 - (float(x - img_right_edge) / denom) if denom > 0 else 1.0
+            else:
+                gradient_line[x] = 1.0
+
+        # S-образное сглаживание фона к краям экрана
+        gradient_line = 3 * (gradient_line ** 2) - 2 * (gradient_line ** 3)
+        gradient_mask = np.tile(gradient_line, (scr_h, 1))
+        gradient_mask = np.atleast_3d(gradient_mask)
+        
+        # Получаем готовый затухающий фон
+        canvas_bg = (canvas_base.astype(np.float32) * gradient_mask).astype(np.uint8)
+
+        # === СОЗДАНИЕ ВЫДЕЛЕННОГО ПОЛНОЭКРАННОГО СЛОЯ С ОРИГИНАЛЬНОЙ КАРТИНКОЙ ===
+        canvas_fg = canvas_bg.copy()
         c_x1, c_y1 = max(0, start_x), max(0, start_y)
         c_x2, c_y2 = min(scr_w, start_x + new_w), min(scr_h, start_y + new_h)
         r_x1, r_y1 = max(0, -start_x), max(0, -start_y)
         r_x2, r_y2 = r_x1 + (c_x2 - c_x1), r_y1 + (c_y2 - c_y1)
 
         if (c_x2 > c_x1) and (c_y2 > c_y1):
-            canvas[c_y1:c_y2, c_x1:c_x2] = resized[r_y1:r_y2, r_x1:r_x2]
+            canvas_fg[c_y1:c_y2, c_x1:c_x2] = resized[r_y1:r_y2, r_x1:r_x2]
 
-        # === РЕНДЕРИНГ OSD САЙДБАРА К ЛЕВОМУ КРАЮ И НА ВСЮ ВЫСОТУ ===
+        # === ГЕНЕРАЦИЯ АЛЬФА-МАСКИ ЧЕРЕЗ DISTANCE TRANSFORM И КОСИНУСНУЮ ИНТЕРПОЛЯЦИЮ ===
+        photo_mask = np.zeros((scr_h, scr_w), dtype=np.uint8)
+        photo_mask[c_y1:c_y2, c_x1:c_x2] = 255
+
+        # Точное евклидово расстояние от пикселей внутри фото до его границ
+        dist_transform = cv2.distanceTransform(photo_mask, cv2.DIST_L2, 5)
+
+        # Желаемая ширина мягкого косинусного перехода в пикселях
+        feather_size = 11.0
+        
+        # Линейная нормализация коридора (0.0 на краю, 1.0 в глубине кадра)
+        linear_mask = np.clip(dist_transform / feather_size, 0.0, 1.0)
+        
+        # Превращаем линейный спад в косинусный (Smoothstep / Cosine Fade)
+        # Формула: 0.5 - 0.5 * cos(linear_mask * pi)
+        # На краях (где 0.0) даст 0.5 - 0.5*1 = 0.0. В глубине (где 1.0) даст 0.5 - 0.5*(-1) = 1.0.
+        feather_mask = 0.5 - 0.5 * np.cos(linear_mask * np.pi)
+        feather_mask = np.atleast_3d(feather_mask.astype(np.float32))
+
+        # === ПОЛНОЭКРАННЫЙ МАТЕМАТИЧЕСКИЙ АЛЬФА-БЛЕНДИНГ ===
+        canvas = (canvas_fg.astype(np.float32) * feather_mask + 
+                  canvas_bg.astype(np.float32) * (1.0 - feather_mask)).astype(np.uint8)
+
+        # Наложение HUD-интерфейсов (без изменений во втором блоке)
         if self.state.show_osd:
             canvas = self._draw_osd(canvas, current_filename, total_count, file_index)
-
-        # === РЕНДЕРИНГ СПРАВКИ К ПРАВОМУ КРАЮ И НА ВСЮ ВЫСОТУ ===
         if self.state.show_help:
             canvas = self._draw_help(canvas)
-
-        # === РЕНДЕРИНГ ВИДЖЕТА ОБРАТНОГО ОТСЧЕТА СЛАЙД-ШОУ ===
         if self.state.slideshow_active:
             canvas = self._draw_slideshow_timer(canvas)
 
         return canvas
+    
+    # === ПРОДОЛЖЕНИЕ КЛАССА VisualRenderer: ОТРИСОВКА ИНТЕРФЕЙСА СТАТУСОВ И ПОМОЩИ ===
 
     def _draw_osd(self, canvas, current_filename, total_count, file_index):
         """Внутренний метод отрисовки OSD-сайдбара."""
         scr_h = self.state.screen_h
         m_name = self.ap.method_details.get(self.state.method_name, self.state.method_name)
         
-        # Защита и реактивный статус вывода режима
         if not self.state.has_depth:
             mode_status = "2D FLAT IMAGE (NO 3D METADATA)"
         else:
@@ -168,7 +211,6 @@ class VisualRenderer(object):
         """Отрисовывает аккуратный плавающий виджет обратного отсчета в левом нижнем углу."""
         scr_h = self.state.screen_h
         
-        # Исправлено: Читаем аккумулированное время строго через префикс self.state
         remaining_secs = max(0.0, self.state.slideshow_delay - self.state.slideshow_accumulator)
         timer_text = f"NEXT IN: {remaining_secs:.1f}s"
         
@@ -187,3 +229,4 @@ class VisualRenderer(object):
             cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA
         )
         return canvas
+
