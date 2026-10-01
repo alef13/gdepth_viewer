@@ -203,8 +203,24 @@ class AnaglyphProcessor(object):
         elif state_obj.view_mode == "anaglyph":
             mixer_func = getattr(self, state_obj.method_name, None)
             if mixer_func is not None:
-                return mixer_func(left_eye, right_eye)
+                anaglyph_frame = mixer_func(left_eye, right_eye)
+                
+                # === АППАРАТНОЕ ПОДВАЛЕНИЕ ХРОМАТИЧЕСКИХ ПРИЗРАКОВ (GHOST REDUCTION) ===
+                if state_obj.anaglyph_ghost_reduction:
+                    # Разделяем анаглиф на физические каналы BGR
+                    b, g, r = cv2.split(anaglyph_frame)
+                    
+                    # Математическая компенсация: утечка красного в правый глаз и сине-зеленого в левый
+                    # Приглушаем экстремальные выбросы яркости на стыках за счет перекрестной фильтрации
+                    r_compensated = cv2.subtract(r, cv2.scaleAdd(g, 0.12, cv2.scaleAdd(b, 0.08, np.zeros_like(b))))
+                    g_compensated = cv2.addWeighted(g, 0.95, r, 0.05, 0)
+                    b_compensated = cv2.addWeighted(b, 0.92, r, 0.08, 0)
+                    
+                    anaglyph_frame = cv2.merge([b_compensated, g_compensated, r_compensated])
+                
+                return anaglyph_frame
             else:
                 raise AttributeError(f"Метод микширования {state_obj.method_name} не найден.")
 
         return image
+

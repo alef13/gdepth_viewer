@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Модуль конфигурации и валидации состояния приложения."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, PrivateAttr
+from typing import List
 
 
 class ViewerState(BaseModel):
@@ -49,6 +50,13 @@ class ViewerState(BaseModel):
     mouse_dx: float = Field(default=0.0, description="Текущее отклонение мыши по X (-1.0 до 1.0)")
     mouse_dy: float = Field(default=0.0, description="Текущее отклонение мыши по Y (-1.0 до 1.0)")
 
+    # === НАСТРОЙКИ ВЕРСИИ 2 (UX, АНТИ-ГОСТИНГ, WIGGLE И ГИСТОГРАММА) ===
+    anaglyph_ghost_reduction: bool = Field(default=True, description="Флаг умного подавления двоения каналов")
+    last_input_time: float = Field(default=0.0, description="Системное время последнего действия пользователя")
+    wiggle_phase: float = Field(default=0.0, description="Текущая временная фаза генерации колебания")
+    wiggle_speed: float = Field(default=12.0, ge=2.0, le=30.0, description="Частота анимации Wiggle в Герцах")
+    show_histogram: bool = Field(default=True, description="Флаг отображения аналитической гистограммы планов")
+
     @field_validator("blur")
     @classmethod
     def check_blur_is_odd(cls, v: int) -> int:
@@ -56,3 +64,4 @@ class ViewerState(BaseModel):
         if v % 2 == 0:
             return v + 1
         return v
+

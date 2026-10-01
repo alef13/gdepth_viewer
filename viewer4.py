@@ -4,6 +4,7 @@
 import argparse
 import os
 import sys
+import time
 import pygame
 import numpy as np
 
@@ -56,6 +57,7 @@ def main():
     args = parse_cli_args()
     all_files, file_index = scan_directory(args.file)
 
+    state.last_input_time = time.time()
     try:
         # 1. Инициализация SDL / Pygame
         pygame.init()
