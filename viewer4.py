@@ -132,7 +132,7 @@ def main():
             pygame.display.flip()
 
             # Обрабатываем ввод и таймеры
-            if not controller.handle_input(image_cached):
+            if not controller.handle_input():
                 running = False
 
         pygame.quit()

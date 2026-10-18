@@ -24,7 +24,6 @@ class VisualRenderer(object):
         self._cached_fg_geometry_key = None  
 
         self.last_detected_box = None
-        self.last_detected_skelet = []
         
         # Сквозные триггеры для интеллектуального ИИ-автофокуса в слайд-шоу
         self.autofocus_mode_active = False
@@ -199,28 +198,6 @@ class VisualRenderer(object):
             timer_layer = self._draw_slideshow_timer(canvas.copy())
             cv2.addWeighted(timer_layer, 1.0, canvas, 0.0, 0, canvas)
 
-        # === ВЫСОКОТОЧНЫЙ ОТРИСОВЩИК РАМКИ (ИСПРАВЛЕНА РАСПАКОВКА CORTEX) ===
-        #if hasattr(self, 'last_detected_box') and self.last_detected_box is not None:
-        if False:
-            bx, by, bw, bh = self.last_detected_box
-            current_scale = float(self.state.scale)
-            
-            # Накладываем рамку поверх финальных отмасштабированных координат
-            screen_rx1 = int(start_x + (float(bx) * current_scale))
-            screen_ry1 = int(start_y + (float(by) * current_scale))
-            screen_rx2 = int(screen_rx1 + (float(bw) * current_scale))
-            screen_ry2 = int(screen_ry1 + (float(bh) * current_scale))
-            
-            cv2.rectangle(canvas, (screen_rx1, screen_ry1), (screen_rx2, screen_ry2), (128, 255, 0), 2, cv2.LINE_AA)
-            
-            status_text = f"YOLO LOCK: {current_scale:.2f}x"
-            # ИСПРАВЛЕНО: Безопасно вытаскиваем только ширину из вложенной структуры tuple
-            t_w = int(cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)[0][0])
-            
-            cv2.rectangle(canvas, (screen_rx1, max(screen_ry1 - 18, 0)), (screen_rx1 + t_w + 10, max(screen_ry1, 15)), (0, 0, 0), -1)
-            cv2.putText(canvas, status_text, (screen_rx1 + 5, max(screen_ry1 - 5, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (128, 255, 0), 1, cv2.LINE_AA)
-
         return canvas
 
     # === ПРОДОЛЖЕНИЕ КЛАССА VisualRenderer: ВСТРОЕННАЯ ГИСТОГРАММА И ИНТЕРФЕЙС ===
@@ -339,7 +316,6 @@ class VisualRenderer(object):
 
     def _execute_yolo_focus(self, image):
         """Внутренний математический метод ИИ-детекции и кроп-масштабирования."""
-        import numpy as np
         orig_h, orig_w = image.shape[:2]
         self.last_detected_box = None
 

@@ -152,11 +152,13 @@ class AnaglyphProcessor(object):
         if state_obj.view_mode == "depthmap":
             return cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
 
+        # ИСПРАВЛЕНО: Сначала объявляем базовый нормализованный массив
+        depth_normalized = depth_map.astype(float) / 255.0
+
+        # Теперь безопасно применяем логарифмический сдвиг планов
         if state_obj.depth_interpretation == "logarithmic":
             depth_normalized = (np.exp(depth_normalized * 3.0) - 1.0) / (np.exp(3.0) - 1.0)
             depth_normalized = np.clip(depth_normalized, 0.0, 1.0)
-        else:
-            depth_normalized = depth_map.astype(float) / 255.0
 
         conv_bias = state_obj.convergence / 100.0
 

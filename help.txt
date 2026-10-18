@@ -14,15 +14,16 @@
 [ F10 ]             Toggle Slideshow Order (SEQ / SHUFFLE)
 [ F11 ]             Toggle Interactive Facebook 3D Look (Mouse)
 [ F12 ]             Open Lenticular Interlacing UI Dialog
+[ F ]               Intelligent AI Autofocus Target Hold
 --- SCREEN SCALE & RE-FRAMING ---
 [ 0 ]               Reset Zoom step to native 100%
 [ 1 ]               Auto-Fit image to Screen (Letterbox)
 [ 2 ]               Smart Fill Screen (Crop borders)
 [ + ] / [ - ]       Canvas Zoom In / Zoom Out step 5%
 [ ARROW KEYS ]      Pan oversized image matrix
---- DYNAMIC MODIFIERS ([ / ]) ---
-[ [ ] / [ ] ]       Adjust Slideshow Delay (Default mode)
-[ [ ] / [ ] ]       Adjust Wiggle Frequency (In Wiggle mode)
+--- DYNAMIC MODIFIERS ---
+[ [ ]               Decrease (Slideshow Delay / Wiggle Freq)
+[ ] ]               Increase (Slideshow Delay / Wiggle Freq)
 --- RED-CYAN ANAGLYPH MATRICES ---
 [ Q W E R T Y U I O P ] -> 10 basic empirical methods
 --- ADVANCED MATRICES ---
@@ -32,5 +33,5 @@
 [ X ]               -> Green-Magenta Dubois Linear Method
 --- 3D GEOMETRY MODIFIERS ---
 [ / ] / [ * ]       -> Scale Stereo Base down / up
-[ INS ] / [ DEL ]   -> Shift Parallax Plane up / down
+[ INS ] / [ DEL ]   -> Convergence Shift Plane up / down
 

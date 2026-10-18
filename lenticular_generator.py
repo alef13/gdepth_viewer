@@ -33,13 +33,12 @@ class LenticularGenerator(object):
 
         progress_callback(0.05, "Extracting high-resolution depth map...")
 
-        # Формирование карты глубин (с учетом настроек микрорельефа)
         if self.state.use_microrelief:
             depth_map = self.ap.dp.get_detailed_depth(self.state.blur, self.state.opacity)
         else:
             depth_map = self.ap.dp.raw_depth.copy()
         
-        # Масштабирование исходных данных до целевого разрешения печати (CUBIC для фото)
+        # ИСПРАВЛЕНО: Заменено на INTER_LINEAR для исключения артефактов Рунге на карте глубин
         master_img = cv2.resize(self.src_img, (total_print_w_px, total_print_h_px), interpolation=cv2.INTER_CUBIC)
         master_depth = cv2.resize(depth_map, (total_print_w_px, total_print_h_px), interpolation=cv2.INTER_LINEAR)
         depth_normalized = master_depth.astype(np.float32) / 255.0
