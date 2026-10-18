@@ -36,7 +36,7 @@ class ViewerState(BaseModel):
     has_depth: bool = Field(default=True, description="Флаг наличия 3D метаданных в активном файле")
 
     slideshow_active: bool = Field(default=False, description="Флаг активности слайд-шоу")
-    slideshow_delay: float = Field(default=4.0, ge=0.5, le=30.0, description="Задержка слайд-шоу в секундах")
+    slideshow_delay: float = Field(default=8.0, ge=0.5, le=30.0, description="Задержка слайд-шоу в секундах")
     show_slideshow_status: bool = Field(default=True, description="Показывать статус слайд-шоу")
     slideshow_order: str = Field(
         default="sequential",

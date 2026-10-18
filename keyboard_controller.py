@@ -218,7 +218,18 @@ class KeyboardController(object):
                     h, w, _ = self.ap.dp.primary_img.shape
                     self.state.scale = self.renderer.get_fit_to_screen_scale(w, h)
                     self.state.offset_x, self.state.offset_y = 0, 0
-                    
+                elif key == pygame.K_f:
+                    # Вызываем наш метод детекции, передавая оригинальное изображение
+                    found = self.renderer.focus_on_person(self.ap.dp.primary_img)
+                    if found:
+                        print("[+] Человек успешно найден. Камера сфокусирована.")
+                    else:
+                        print("[-] На фотографии не обнаружено людей.")
+                    image_cached = None
+                    self.state.need_update = True
+                
+
+    
                 # РЕЖИМ SMART FILL НА КЛАВИШУ 2
                 elif key == pygame.K_2:
                     h, w, _ = self.ap.dp.primary_img.shape

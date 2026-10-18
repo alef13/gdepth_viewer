@@ -101,6 +101,7 @@ def main():
             time_delta = clock.tick(60) / 1000.0
 
             if state.need_update or image_cached is None:
+                image_cached = None
                 image_cached = controller.update_processors_and_render()
                 state.need_update = False
 
